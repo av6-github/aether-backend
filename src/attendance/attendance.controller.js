@@ -1,22 +1,10 @@
 import { attendanceService } from './attendance.service.js';
-import { pushToUser, pushToDivision } from '../notifications/socket.server.js';
 
 export const attendanceController = {
   async selfMark(req, res, next) {
     try {
       const session = await attendanceService.markStudentSelf(req.user.userId, req.body);
       res.status(200).json({ success: true, message: 'Attendance registered', data: session });
-
-      // Real-time: notify the student their own attendance was recorded
-      setImmediate(() => {
-        try {
-          pushToUser(req.user.userId, 'attendance:updated', {
-            subjectId: session.subjectId,
-            date:      session.date,
-            status:    session.records.find(r => r.studentId.toString() === req.user.userId)?.status,
-          });
-        } catch {}
-      });
     } catch (err) { next(err); }
   },
 
@@ -24,19 +12,6 @@ export const attendanceController = {
     try {
       const session = await attendanceService.facultyOverride(req.user.userId, req.body);
       res.status(200).json({ success: true, message: 'Attendance overridden', data: session });
-
-      // Real-time: notify every affected student
-      setImmediate(() => {
-        try {
-          for (const record of session.records) {
-            pushToUser(record.studentId.toString(), 'attendance:updated', {
-              subjectId: session.subjectId,
-              date:      session.date,
-              status:    record.status,
-            });
-          }
-        } catch {}
-      });
     } catch (err) { next(err); }
   },
 

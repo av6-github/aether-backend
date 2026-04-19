@@ -4,7 +4,7 @@ import { User } from '../shared.js';
 
 class ChatService {
   /**
-   * Build a consistent roomId from two user IDs (always sorted so A_B == B_A)
+   * Build a consistent roomId from two user IDs (always sorted so A<->B == B<->A)
    */
   static buildRoomId(idA, idB) {
     const sorted = [idA.toString(), idB.toString()].sort();
@@ -12,11 +12,15 @@ class ChatService {
   }
 
   async sendMessage(senderId, senderRole, roomId, message) {
-    const msg = await ChatMessage.create({ roomId, senderId, senderRole, message });
+    // Normalise role — ChatMessage enum only allows a subset
+    const normRole = ['student', 'faculty', 'hod', 'dean', 'council', 'superadmin'].includes(senderRole)
+      ? senderRole
+      : 'faculty';
+    const msg = await ChatMessage.create({ roomId, senderId, senderRole: normRole, message });
     return msg.populate('senderId', 'name role');
   }
 
-  async getHistory(roomId, limit = 100) {
+  async getHistory(roomId, limit = 200) {
     return ChatMessage.find({ roomId })
       .populate('senderId', 'name role')
       .sort({ createdAt: 1 })
@@ -24,35 +28,48 @@ class ChatService {
   }
 
   /**
-   * Get all chat rooms a user has participated in,
-   * with last message and the other participant's info.
+   * Get all 1-1 chat rooms a user has participated in,
+   * with the last message and the other participant's info.
+   * Fixes: previous version only counted rooms where the user SENT a message,
+   * missing rooms where they only received. Now we find all rooms containing their userId in the roomId string.
    */
   async getInbox(userId) {
-    // Find all distinct rooms this user has sent or received a message in
-    const sent = await ChatMessage.distinct('roomId', { senderId: userId });
-    const received = await ChatMessage.distinct('roomId', {
-      roomId: { $in: sent.length > 0 ? { $nin: sent } : [] }
+    const userStr = userId.toString();
+
+    // Find all distinct roomIds where this user participated (sent OR received)
+    // roomId format: "smallerId_largerId" — user appears in the string
+    const allRooms = await ChatMessage.distinct('roomId', {
+      $or: [
+        { senderId: userId },
+        // Rooms where the user is the OTHER participant —
+        // their id appears somewhere in the roomId string
+        { roomId: new RegExp(userStr) },
+      ],
     });
-    const allRooms = [...new Set([...sent])];
 
     const inbox = [];
     for (const roomId of allRooms) {
+      // Skip coordination room IDs (they are MongoDB ObjectIds, not `id_id` format)
+      if (!roomId.includes('_')) continue;
+
       const lastMsg = await ChatMessage.findOne({ roomId })
         .sort({ createdAt: -1 })
         .populate('senderId', 'name role');
       if (!lastMsg) continue;
 
-      // Find the other participant from roomId (format: "id1_id2")
+      // Identify the other participant from the roomId
       const [idA, idB] = roomId.split('_');
-      const otherId = idA === userId.toString() ? idB : idA;
-      const other = await User.findById(otherId).select('name role semester division enrollmentNo');
+      const otherId = idA === userStr ? idB : idA;
+
+      const other = await User.findById(otherId).select('name email role subRole semester division enrollmentNo');
 
       inbox.push({
         roomId,
         other,
-        lastMessage: lastMsg.message,
+        lastMessage:   lastMsg.message,
         lastMessageAt: lastMsg.createdAt,
-        lastSenderId: lastMsg.senderId?._id || lastMsg.senderId,
+        lastSenderId:  lastMsg.senderId?._id || lastMsg.senderId,
+        unread:        false, // placeholder — can be extended with read receipts
       });
     }
 
@@ -61,20 +78,22 @@ class ChatService {
 
   /**
    * Check if a student is allowed to initiate chat with a faculty.
-   * Allowed if faculty sent a message to them first (faculty-initiated),
-   * OR student has an accepted advising request with that faculty.
+   * Allowed if:
+   *   (a) Faculty has already sent at least one message to the student, OR
+   *   (b) Student has an acknowledged/done advising request with that faculty.
    */
   async studentCanChat(studentId, facultyId) {
     const roomId = ChatService.buildRoomId(studentId, facultyId);
-    // Check if faculty sent first message
-    const facultyMsg = await ChatMessage.findOne({ roomId, senderId: facultyId, senderRole: 'faculty' });
+
+    // (a) Has faculty already messaged them?
+    const facultyMsg = await ChatMessage.findOne({ roomId, senderId: facultyId });
     if (facultyMsg) return true;
 
-    // Check approved advising request
+    // (b) Is there an acknowledged advising request?
     const approvedRequest = await AdvisingRequest.findOne({
       studentId,
       facultyId,
-      status: { $in: ['acknowledged', 'done'] }
+      status: { $in: ['acknowledged', 'done'] },
     });
     return !!approvedRequest;
   }

@@ -6,7 +6,9 @@ import { createEventSchema, eventApprovalSchema } from '../validators/event.vali
 
 const router = Router();
 
-// Any authenticated student, council, or committee member can request an event
+const ALL_EVENT_ROLES = ['student', 'council', 'committee', 'hod', 'dean', 'superadmin'];
+
+// Submit a new event request
 router.post(
   '/',
   requireRoles('student', 'council', 'committee'),
@@ -14,20 +16,31 @@ router.post(
   eventController.submitEvent
 );
 
-// Get all events (public to authenticated users)
-router.get(
-  '/',
-  eventController.getAllEvents
-);
+// Get all approved events (public calendar)
+router.get('/', eventController.getAllEvents);
 
-// Admins get their pending queue
+// Pending queue for reviewers
 router.get(
   '/pending',
   requireRoles('council', 'hod', 'dean', 'superadmin', 'committee'),
   eventController.getPending
 );
 
-// Admins reviewing an event (Approve/Reject)
+// My submitted requests (student/committee)
+router.get(
+  '/me',
+  requireRoles('student', 'council', 'committee'),
+  eventController.myRequests
+);
+
+// Council / HOD / Dean: history of events they personally reviewed
+router.get(
+  '/my-approvals',
+  requireRoles('council', 'hod', 'dean', 'superadmin'),
+  eventController.myApprovals
+);
+
+// Approve/Reject an event
 router.patch(
   '/:id/review',
   requireRoles('council', 'hod', 'dean', 'superadmin'),
@@ -35,25 +48,18 @@ router.patch(
   eventController.reviewEvent
 );
 
-// Filter requests raised strictly by the active student/committee
+// Full event detail with populated chain — for EventDetailScreen
+// Owner (requester) or any reviewer role can access
 router.get(
-  '/me',
-  requireRoles('student', 'council', 'committee'),
-  eventController.myRequests
+  '/:id/detail',
+  requireRoles(...ALL_EVENT_ROLES),
+  eventController.getEventById
 );
 
-// Council / HOD / Dean: history of events they personally reviewed/approved
-router.get(
-  '/my-approvals',
-  requireRoles('council', 'hod', 'dean', 'superadmin'),
-  eventController.myApprovals
-);
-
-// Download PDF for an event — accessible to all authenticated roles
-// (student needs it to download their approved event letter)
+// Download/generate the proposal PDF
 router.get(
   '/:id/pdf',
-  requireRoles('student', 'council', 'committee', 'hod', 'dean', 'superadmin'),
+  requireRoles(...ALL_EVENT_ROLES),
   eventController.getEventPdf
 );
 

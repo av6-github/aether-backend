@@ -43,13 +43,5 @@ export const analyticsController = {
       const data = await analyticsService.getEventStats(req.user.departmentId);
       res.status(200).json({ success: true, data });
     } catch (err) { next(err); }
-  },
-
-  // Student personal analytics — safe, never throws
-  async studentAnalytics(req, res, next) {
-    try {
-      const data = await analyticsService.getStudentAnalytics(req.user.userId, req.user.departmentId);
-      res.status(200).json({ success: true, data });
-    } catch (err) { next(err); }
-  },
+  }
 };

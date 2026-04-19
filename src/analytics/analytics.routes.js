@@ -10,14 +10,10 @@ router.get('/hod/dashboard', requireRoles('hod', 'superadmin'), analyticsControl
 // Dean combined dashboard — college-wide
 router.get('/dean/dashboard', requireRoles('dean', 'superadmin'), analyticsController.deanDashboard);
 
-// Student personal analytics — attendance breakdown by subject (safe, never throws)
-router.get('/student', requireRoles('student'), analyticsController.studentAnalytics);
-
-// Granular stats — accessible by HOD, Dean, and superadmin
+// Granular stats — accessible by both HOD and Dean
 router.get('/attendance', requireRoles('hod', 'dean', 'superadmin'), analyticsController.attendanceStats);
-router.get('/syllabus',   requireRoles('hod', 'dean', 'superadmin'), analyticsController.syllabusStats);
-router.get('/issues',     requireRoles('hod', 'dean', 'superadmin'), analyticsController.issueStats);
-router.get('/events',     requireRoles('hod', 'dean', 'superadmin'), analyticsController.eventStats);
+router.get('/syllabus', requireRoles('hod', 'dean', 'superadmin'), analyticsController.syllabusStats);
+router.get('/issues', requireRoles('hod', 'dean', 'superadmin'), analyticsController.issueStats);
+router.get('/events', requireRoles('hod', 'dean', 'superadmin'), analyticsController.eventStats);
 
 export { router as analyticsRouter };
-
