@@ -213,7 +213,23 @@ class EventService {
   }
 
   async getMyEvents(studentId) {
-    return EventRequest.find({ requestedBy: studentId }).sort({ createdAt: -1 });
+    return EventRequest.find({ requestedBy: studentId })
+      .sort({ createdAt: -1 })
+      .populate('requestedBy', 'name email')
+      .populate('departmentId', 'name');
+  }
+
+  /**
+   * Council / HOD / Dean: get all events they have personally approved or rejected.
+   * Searches the chain[] array for any step where userId === actorId.
+   */
+  async getMyApprovals(actorId) {
+    return EventRequest.find({
+      'chain.userId': new mongoose.Types.ObjectId(actorId),
+    })
+      .populate('requestedBy', 'name email')
+      .populate('departmentId', 'name')
+      .sort({ updatedAt: -1 });
   }
 
   async getAllEvents() {

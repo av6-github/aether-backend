@@ -42,9 +42,18 @@ router.get(
   eventController.myRequests
 );
 
-// Get the extended PDF form for any event
+// Council / HOD / Dean: history of events they personally reviewed/approved
+router.get(
+  '/my-approvals',
+  requireRoles('council', 'hod', 'dean', 'superadmin'),
+  eventController.myApprovals
+);
+
+// Download PDF for an event — accessible to all authenticated roles
+// (student needs it to download their approved event letter)
 router.get(
   '/:id/pdf',
+  requireRoles('student', 'council', 'committee', 'hod', 'dean', 'superadmin'),
   eventController.getEventPdf
 );
 
