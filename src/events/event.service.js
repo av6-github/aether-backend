@@ -2,6 +2,7 @@ import { EventRequest, Timetable, User, getPublisher } from '../shared.js';
 import mongoose from 'mongoose';
 import { generateEventCertificate } from '../utils/pdf.util.js';
 import { notificationService } from '../notifications/notification.service.js';
+import { pushToUser, pushToRole } from '../notifications/socket.server.js';
 
 // Checks overlaps against all approved timetables containing a specific room/venue
 async function checkVenueClash(venueName, startTime, endTime) {
@@ -43,23 +44,23 @@ async function checkVenueClash(venueName, startTime, endTime) {
 
 function calculateApprovalProbability(leadTimeDays, venueContentionCount, clubHistory) {
   let score = 50; // Base 50%
-
+  
   // Lead time: +2% for each day advance, up to 14 days (+28%)
   score += Math.min(leadTimeDays * 2, 28);
-
+  
   // Venue Contention: -5% for each other event in the same week
   score -= (venueContentionCount * 5);
-
+  
   // Historical Success: assume 80% for now (mock logic)
   score += 10;
-
+  
   return Math.min(Math.max(score, 5), 99); // Clamp 5-99%
 }
 
 class EventService {
   async createRequest(user, data) {
     const { title, description, venue, startTime, endTime, expectedAttendance, templateType } = data;
-
+    
     // Automatic 1-step algorithmic clash check
     const isClashing = await checkVenueClash(venue, startTime, endTime);
 
@@ -72,8 +73,8 @@ class EventService {
         console.error('[AI Conflict Suggestion Failed]', aiErr);
       }
 
-      throw {
-        status: 409,
+      throw { 
+        status: 409, 
         message: `Validation Failed: Conflict detected. ${venue} is already booked during this time.`,
         data: {
           conflict: true,
@@ -109,9 +110,9 @@ class EventService {
       templateType,
       resources,
       conflictChecked: true,
-      conflictResult: {
+      conflictResult: { 
         msg: 'No conflict detected.',
-        probability: probability
+        probability: probability 
       },
       currentStage: 'council', // Next up in chain
       chain: []
@@ -209,11 +210,45 @@ class EventService {
     }
 
     await event.save();
+
+    // ── Real-time socket pushes ───────────────────────────────────────────
+    const socketPayload = {
+      eventId:      event._id,
+      title:        event.title,
+      currentStage: event.currentStage,
+    };
+
+    // Always notify the requester — their "My Requests" list updates live
+    pushToUser(event.requestedBy.toString(), 'event:updated', socketPayload);
+
+    // Notify the next-stage reviewer role so their pending queue refreshes
+    if (event.currentStage === 'hod')      pushToRole('hod',    'event:pending_review', socketPayload);
+    if (event.currentStage === 'dean')     pushToRole('dean',   'event:pending_review', socketPayload);
+    if (event.currentStage === 'approved') pushToUser(event.requestedBy.toString(), 'event:approved', socketPayload);
+    if (event.currentStage === 'rejected') pushToUser(event.requestedBy.toString(), 'event:rejected', socketPayload);
+    // ─────────────────────────────────────────────────────────────────────
+
     return event;
   }
 
   async getMyEvents(studentId) {
-    return EventRequest.find({ requestedBy: studentId }).sort({ createdAt: -1 });
+    return EventRequest.find({ requestedBy: studentId })
+      .sort({ createdAt: -1 })
+      .populate('requestedBy', 'name email')
+      .populate('departmentId', 'name');
+  }
+
+  /**
+   * Council / HOD / Dean: get all events they have personally approved or rejected.
+   * Searches the chain[] array for any step where userId === actorId.
+   */
+  async getMyApprovals(actorId) {
+    return EventRequest.find({
+      'chain.userId': new mongoose.Types.ObjectId(actorId),
+    })
+      .populate('requestedBy', 'name email')
+      .populate('departmentId', 'name')
+      .sort({ updatedAt: -1 });
   }
 
   async getAllEvents() {
