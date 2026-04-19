@@ -39,6 +39,13 @@ export const eventController = {
     }
   },
 
+  async myApprovals(req, res, next) {
+    try {
+      const requests = await eventService.getMyApprovals(req.user.userId);
+      res.status(200).json({ success: true, count: requests.length, data: requests });
+    } catch (err) { next(err); }
+  },
+
   // Single event detail with full chain + populated fields
   // Accessible to: the requester themselves, plus council/hod/dean/superadmin
   async getEventById(req, res, next) {
