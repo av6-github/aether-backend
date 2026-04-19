@@ -172,9 +172,29 @@ class ClubService {
   }
 
   async getMyClubs(userId) {
-    return Club.find({ 'members.userId': userId, 'members.isActive': true, isActive: true })
+    return Club.find({ 
+      members: { $elemMatch: { userId, isActive: true } }, 
+      isActive: true 
+    })
       .populate('facultyAdvisorId', 'name')
       .select('name category description members joinRequests');
+  }
+
+  /**
+   * Get the pending join requests submitted by the student themselves.
+   */
+  async getMySentRequests(userId) {
+    const clubs = await Club.find({
+      joinRequests: { $elemMatch: { userId, status: 'pending' } },
+      isActive: true
+    }).select('name joinRequests');
+
+    const pending = [];
+    for (const club of clubs) {
+      const myReqs = club.joinRequests.filter(r => r.userId.toString() === userId.toString() && r.status === 'pending');
+      if (myReqs.length > 0) pending.push({ clubId: club._id, clubName: club.name, requests: myReqs });
+    }
+    return pending;
   }
 
   /**

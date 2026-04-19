@@ -23,6 +23,13 @@ router.get(
   clubController.getPendingRequests
 );
 
+// Student: get their own outgoing join requests
+router.get(
+  '/my-requests',
+  requireRoles('student', 'council'),
+  clubController.getMySentRequests
+);
+
 router.get(
   '/:id',
   requireRoles('student', 'faculty', 'hod', 'dean', 'council', 'superadmin', 'committee'),

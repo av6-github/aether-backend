@@ -49,6 +49,13 @@ export const clubController = {
     } catch (err) { next(err); }
   },
 
+  async getMySentRequests(req, res, next) {
+    try {
+      const data = await clubService.getMySentRequests(req.user.userId);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
   async leave(req, res, next) {
     try {
       await clubService.leave(req.params.id, req.user.userId);
