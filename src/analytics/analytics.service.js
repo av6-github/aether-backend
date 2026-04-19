@@ -5,27 +5,21 @@ class AnalyticsService {
 
   // ─── Department Attendance Analytics ────────────────────────────────────
   async getAttendanceStats(departmentId) {
-    const deptId = new mongoose.Types.ObjectId(departmentId);
+    if (!departmentId) return { overallPercent: 0, totalSessions: 0, studentsBelow75: 0 };
 
-    // Overall average attendance % across all sessions in the department
+    let deptId;
+    try { deptId = new mongoose.Types.ObjectId(departmentId); }
+    catch { return { overallPercent: 0, totalSessions: 0, studentsBelow75: 0 }; }
+
     const sessions = await Attendance.find({ departmentId: deptId }).lean();
 
     let totalStudentSlots = 0;
     let presentCount = 0;
 
-    const subjectMap = {};
-
     for (const session of sessions) {
-      const subKey = session.subjectId?.toString();
-      if (!subjectMap[subKey]) subjectMap[subKey] = { total: 0, present: 0 };
-
-      for (const record of session.records) {
+      for (const record of (session.records || [])) {
         totalStudentSlots++;
-        subjectMap[subKey].total++;
-        if (record.status === 'present' || record.status === 'late') {
-          presentCount++;
-          subjectMap[subKey].present++;
-        }
+        if (record.status === 'present' || record.status === 'late') presentCount++;
       }
     }
 
@@ -38,11 +32,10 @@ class AnalyticsService {
       { $unwind: '$records' },
       { $group: {
         _id: '$records.studentId',
-        total: { $sum: 1 },
+        total:   { $sum: 1 },
         present: { $sum: { $cond: [{ $in: ['$records.status', ['present', 'late']] }, 1, 0] } }
       }},
       { $project: {
-        studentId: '$_id',
         percentage: { $multiply: [{ $divide: ['$present', '$total'] }, 100] }
       }},
       { $match: { percentage: { $lt: 75 } } },
@@ -58,18 +51,23 @@ class AnalyticsService {
 
   // ─── Syllabus Completion Analytics ───────────────────────────────────────
   async getSyllabusStats(departmentId, academicYear) {
-    const deptId = new mongoose.Types.ObjectId(departmentId);
+    if (!departmentId) return { averageCompletion: 0, subjects: [] };
+
+    let deptId;
+    try { deptId = new mongoose.Types.ObjectId(departmentId); }
+    catch { return { averageCompletion: 0, subjects: [] }; }
+
     const trackers = await SyllabusProgress.find({
       departmentId: deptId,
-      academicYear
+      ...(academicYear ? { academicYear } : {}),
     }).populate('subjectId', 'name code').lean();
 
     const subjects = trackers.map(t => ({
-      subject: t.subjectId?.name || 'Unknown',
-      code: t.subjectId?.code,
+      subject:           t.subjectId?.name || 'Unknown',
+      code:              t.subjectId?.code  || '',
       completionPercent: t.completionPercent || 0,
-      totalTopics: t.topics?.length || 0,
-      doneTopics: t.topics?.filter(tp => tp.status === 'done').length || 0
+      totalTopics:       t.topics?.length || 0,
+      doneTopics:        t.topics?.filter(tp => tp.status === 'done').length || 0,
     }));
 
     const avg = subjects.length === 0 ? 0 :
@@ -85,9 +83,7 @@ class AnalyticsService {
       Issue.countDocuments({ status: 'open' }),
       Issue.countDocuments({ status: 'in_progress' }),
       Issue.countDocuments({ status: 'resolved' }),
-      Issue.aggregate([
-        { $group: { _id: '$category', count: { $sum: 1 } } }
-      ])
+      Issue.aggregate([{ $group: { _id: '$category', count: { $sum: 1 } } }])
     ]);
 
     return { total, open, inProgress, resolved, byCategory };
@@ -95,7 +91,10 @@ class AnalyticsService {
 
   // ─── Event Analytics ────────────────────────────────────────────────────
   async getEventStats(departmentId) {
-    const filter = departmentId ? { departmentId: new mongoose.Types.ObjectId(departmentId) } : {};
+    const filter = {};
+    if (departmentId) {
+      try { filter.departmentId = new mongoose.Types.ObjectId(departmentId); } catch {}
+    }
 
     const [total, pending, approved, rejected] = await Promise.all([
       EventRequest.countDocuments(filter),
@@ -107,15 +106,65 @@ class AnalyticsService {
     return { total, pending, approved, rejected };
   }
 
+  // ─── Student Personal Analytics ──────────────────────────────────────────
+  // Safe wrapper for the student analytics screen — never throws
+  async getStudentAnalytics(studentId, departmentId) {
+    try {
+      let deptId;
+      try { deptId = new mongoose.Types.ObjectId(departmentId); } catch { deptId = null; }
+
+      // Attendance breakdown per subject
+      const sessions = deptId
+        ? await Attendance.find({ departmentId: deptId, 'records.studentId': studentId }).populate('subjectId', 'name code').lean()
+        : [];
+
+      let totalClasses = 0;
+      let attended     = 0;
+      const subjectMap = {};
+
+      for (const session of sessions) {
+        const rec = session.records?.find(r => r.studentId?.toString() === studentId.toString());
+        if (!rec) continue;
+        const key = session.subjectId?.name || 'Unknown';
+        if (!subjectMap[key]) subjectMap[key] = { total: 0, attended: 0, code: session.subjectId?.code };
+        subjectMap[key].total++;
+        totalClasses++;
+        if (rec.status === 'present' || rec.status === 'late') {
+          subjectMap[key].attended++;
+          attended++;
+        }
+      }
+
+      const subjects = Object.entries(subjectMap).map(([name, { total, attended: att, code }]) => ({
+        name,
+        code,
+        total,
+        attended: att,
+        percent:  total ? Math.round((att / total) * 100) : 0,
+      }));
+
+      return {
+        attendance: {
+          overallPercent: totalClasses ? Math.round((attended / totalClasses) * 100) : 0,
+          totalClasses,
+          attended,
+          subjects,
+        },
+      };
+    } catch (err) {
+      console.error('[StudentAnalytics Error]', err.message);
+      return { attendance: { overallPercent: 0, totalClasses: 0, attended: 0, subjects: [] } };
+    }
+  }
+
   // ─── HOD Dashboard Overview (combines all) ──────────────────────────────
   async getHodDashboard(departmentId, academicYear = '2026-2027') {
     const [attendance, syllabus, issues, events] = await Promise.all([
       this.getAttendanceStats(departmentId),
       this.getSyllabusStats(departmentId, academicYear),
       this.getIssueStats(),
-      this.getEventStats(departmentId)
+      this.getEventStats(departmentId),
     ]);
-
     return { attendance, syllabus, issues, events };
   }
 
@@ -125,9 +174,8 @@ class AnalyticsService {
       User.countDocuments({ role: 'student' }),
       User.countDocuments({ role: 'faculty' }),
       this.getIssueStats(),
-      this.getEventStats(null)
+      this.getEventStats(null),
     ]);
-
     return { totalStudents, totalFaculty, issues, events };
   }
 }

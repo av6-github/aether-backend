@@ -2,6 +2,7 @@ import { EventRequest, Timetable, User, getPublisher } from '../shared.js';
 import mongoose from 'mongoose';
 import { generateEventCertificate } from '../utils/pdf.util.js';
 import { notificationService } from '../notifications/notification.service.js';
+import { pushToUser, pushToRole } from '../notifications/socket.server.js';
 
 // Checks overlaps against all approved timetables containing a specific room/venue
 async function checkVenueClash(venueName, startTime, endTime) {
@@ -209,6 +210,24 @@ class EventService {
     }
 
     await event.save();
+
+    // ── Real-time socket pushes ───────────────────────────────────────────
+    const socketPayload = {
+      eventId:      event._id,
+      title:        event.title,
+      currentStage: event.currentStage,
+    };
+
+    // Always notify the requester — their "My Requests" list updates live
+    pushToUser(event.requestedBy.toString(), 'event:updated', socketPayload);
+
+    // Notify the next-stage reviewer role so their pending queue refreshes
+    if (event.currentStage === 'hod')      pushToRole('hod',    'event:pending_review', socketPayload);
+    if (event.currentStage === 'dean')     pushToRole('dean',   'event:pending_review', socketPayload);
+    if (event.currentStage === 'approved') pushToUser(event.requestedBy.toString(), 'event:approved', socketPayload);
+    if (event.currentStage === 'rejected') pushToUser(event.requestedBy.toString(), 'event:rejected', socketPayload);
+    // ─────────────────────────────────────────────────────────────────────
+
     return event;
   }
 

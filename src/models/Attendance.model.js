@@ -35,15 +35,30 @@ AttendanceSchema.index({ 'records.studentId': 1, subjectId: 1 });
 // Real-time synchronization hook
 AttendanceSchema.post('save', async function(doc) {
   try {
-    const { pushToUser } = await import('../notifications/socket.server.js');
+    const { pushToUser, pushToDivision } = await import('../notifications/socket.server.js');
+
+    // Notify each student of their own updated status
     doc.records.forEach(record => {
-      pushToUser(record.studentId.toString(), 'attendance_updated', {
+      pushToUser(record.studentId.toString(), 'attendance:updated', {
         attendanceId: doc._id,
-        date: doc.date,
-        subjectId: doc.subjectId,
-        status: record.status
+        date:         doc.date,
+        subjectId:    doc.subjectId,
+        status:       record.status,
       });
     });
+
+    // Notify faculty/admin: session was updated (so the faculty view refreshes)
+    pushToDivision(
+      doc.departmentId.toString(),
+      doc.division,
+      'attendance:session_updated',
+      {
+        attendanceId: doc._id,
+        date:         doc.date,
+        subjectId:    doc.subjectId,
+        division:     doc.division,
+      }
+    );
   } catch (err) {
     console.error('[Attendance Hook Error]', err);
   }
